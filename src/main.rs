@@ -1,0 +1,55 @@
+mod pager;
+mod render;
+
+use std::env;
+use std::io;
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
+use crossterm::ExecutableCommand;
+use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use ratatui::prelude::*;
+
+use pager::Pager;
+
+fn main() -> Result<()> {
+    let path: PathBuf = env::args()
+        .nth(1)
+        .context("usage: mdreader <fichier.md>")?
+        .into();
+
+    let mut pager = Pager::new(path)?;
+
+    let mut stdout = io::stdout();
+    enable_raw_mode()?;
+    stdout.execute(EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let res = run(&mut terminal, &mut pager);
+
+    disable_raw_mode()?;
+    terminal.backend_mut().execute(LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+
+    res
+}
+
+fn run(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    pager: &mut Pager,
+) -> Result<()> {
+    while !pager.should_quit {
+        terminal.draw(|frame| pager.draw(frame))?;
+
+        if let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            pager.on_key(key.code, key.modifiers);
+        }
+    }
+    Ok(())
+}
