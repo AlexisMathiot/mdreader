@@ -34,6 +34,8 @@ fn find_syntax<'a>(ss: &'a SyntaxSet, lang: &str) -> &'a SyntaxReference {
 }
 
 pub fn render(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
+    let markdown = strip_frontmatter(markdown);
+
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_STRIKETHROUGH);
@@ -41,6 +43,7 @@ pub fn render(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
 
     let parser = Parser::new_ext(markdown, opts);
     let mut r = Renderer::new(max_width);
+
     for event in parser {
         r.handle(event);
     }
@@ -385,6 +388,16 @@ impl Renderer {
             _ => {}
         }
     }
+}
+
+fn strip_frontmatter(content: &str) -> &str {
+    if let Some(rest) = content.strip_prefix("---\n")
+        && let Some(end) = rest.find("\n---\n")
+    {
+        return &rest[end + 5..];
+    }
+
+    content
 }
 
 fn heading_style(level: HeadingLevel) -> (Color, &'static str) {
