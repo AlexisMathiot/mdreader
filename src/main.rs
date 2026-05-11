@@ -2,10 +2,10 @@ mod pager;
 mod render;
 
 use std::env;
-use std::io;
+use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{Result, bail};
 use crossterm::ExecutableCommand;
 use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{
@@ -16,12 +16,16 @@ use ratatui::prelude::*;
 use pager::Pager;
 
 fn main() -> Result<()> {
-    let path: PathBuf = env::args()
-        .nth(1)
-        .context("usage: mdreader <fichier.md>")?
-        .into();
-
-    let mut pager = Pager::new(path)?;
+    let mut pager = match env::args().nth(1) {
+        Some(arg) => Pager::from_path(PathBuf::from(arg))?,
+        None => {
+            if io::stdin().is_terminal() {
+                bail!("usage: mdreader <fichier.md>  (or pipe markdown on stdin)");
+            }
+            let content = io::read_to_string(io::stdin())?;
+            Pager::from_stdin(content)
+        }
+    };
 
     let mut stdout = io::stdout();
     enable_raw_mode()?;

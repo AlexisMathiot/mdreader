@@ -9,11 +9,25 @@ use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap};
 
 use crate::render;
 
+pub enum Source {
+    File(PathBuf),
+    Stdin,
+}
+
+impl Source {
+    fn display_name(&self) -> String {
+        match self {
+            Source::File(path) => path.display().to_string(),
+            Source::Stdin => "stdin".into(),
+        }
+    }
+}
+
 pub struct Pager {
     content: String,
     text: Text<'static>,
     last_width: u16,
-    path: PathBuf,
+    source: Source,
     scroll: u16,
     viewport_height: u16,
     show_help: bool,
@@ -21,19 +35,27 @@ pub struct Pager {
 }
 
 impl Pager {
-    pub fn new(path: PathBuf) -> Result<Self> {
-        let mut pager = Self {
-            content: String::new(),
+    pub fn from_path(path: PathBuf) -> Result<Self> {
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("lecture de {}", path.display()))?;
+        Ok(Self::new(Source::File(path), content))
+    }
+
+    pub fn from_stdin(content: String) -> Self {
+        Self::new(Source::Stdin, content)
+    }
+
+    fn new(source: Source, content: String) -> Self {
+        Self {
+            content,
             text: Text::default(),
             last_width: 0,
-            path,
+            source,
             scroll: 0,
             viewport_height: 0,
             show_help: false,
             should_quit: false,
-        };
-        pager.reload()?;
-        Ok(pager)
+        }
     }
 
     fn ensure_rendered(&mut self, width: u16) {
@@ -96,7 +118,8 @@ impl Pager {
             Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
 
         let h_pad = (content_area.width / 20).max(2);
-        let title = format!(" {} ", self.path.display());
+        let name = self.source.display_name();
+        let title = format!(" {name} ");
         let block = Block::default()
             .borders(Borders::ALL)
             .padding(Padding::horizontal(h_pad))
@@ -121,10 +144,7 @@ impl Pager {
         } else {
             (self.scroll as u32 * 100 / max_scroll as u32) as u16
         };
-        let status = format!(
-            " {}  {pct}%   ?: help   q: quit ",
-            self.path.display()
-        );
+        let status = format!(" {name}  {pct}%   ?: help   q: quit ");
         frame.render_widget(
             Paragraph::new(status).style(Style::default().add_modifier(Modifier::REVERSED)),
             status_area,
@@ -136,7 +156,7 @@ impl Pager {
     }
 
     fn draw_help(&self, frame: &mut Frame) {
-        let lines = vec![
+        let mut lines = vec![
             Line::from(" j / ↓        line down"),
             Line::from(" k / ↑        line up"),
             Line::from(" d            half page down"),
@@ -145,10 +165,12 @@ impl Pager {
             Line::from(" b            page up"),
             Line::from(" g            top"),
             Line::from(" G            bottom"),
-            Line::from(" r            reload"),
-            Line::from(" ?            toggle help"),
-            Line::from(" q / Ctrl+C   quit"),
         ];
+        if matches!(self.source, Source::File(_)) {
+            lines.push(Line::from(" r            reload"));
+        }
+        lines.push(Line::from(" ?            toggle help"));
+        lines.push(Line::from(" q / Ctrl+C   quit"));
         let popup_w = 36u16;
         let popup_h = lines.len() as u16 + 2;
         let area = frame.area();
@@ -166,9 +188,12 @@ impl Pager {
     }
 
     fn reload(&mut self) -> Result<()> {
+        let Source::File(path) = &self.source else {
+            return Ok(());
+        };
+        self.content = fs::read_to_string(path)
+            .with_context(|| format!("lecture de {}", path.display()))?;
         self.last_width = 0;
-        self.content = fs::read_to_string(&self.path)
-            .with_context(|| format!("lecture de {}", self.path.display()))?;
         Ok(())
     }
 }
