@@ -1,11 +1,12 @@
 mod pager;
 mod render;
+mod theme;
 
-use std::env;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
+use clap::Parser;
 use crossterm::ExecutableCommand;
 use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{
@@ -15,9 +16,23 @@ use ratatui::prelude::*;
 
 use pager::Pager;
 
+#[derive(Parser)]
+#[command(name = "mdreader", about = "terminal markdown reader")]
+struct Cli {
+    /// markdown file to display (reads stdin if omitted and stdin is piped)
+    file: Option<PathBuf>,
+
+    /// theme preset (dark, dracula, tokyo-night, light)
+    #[arg(long, default_value = theme::DEFAULT)]
+    theme: String,
+}
+
 fn main() -> Result<()> {
-    let mut pager = match env::args().nth(1) {
-        Some(arg) => Pager::from_path(PathBuf::from(arg))?,
+    let cli = Cli::parse();
+    theme::set(&cli.theme)?;
+
+    let mut pager = match cli.file {
+        Some(path) => Pager::from_path(path)?,
         None => {
             if io::stdin().is_terminal() {
                 bail!("usage: mdreader <fichier.md>  (or pipe markdown on stdin)");

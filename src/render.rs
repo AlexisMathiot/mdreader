@@ -9,21 +9,25 @@ use syntect::parsing::{SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::theme::{self, MdTheme};
+
 const MAX_COL_WIDTH: usize = 40;
 const MIN_COL_WIDTH: usize = 6;
-const TEXT_COLOR: Color = Color::Rgb(230, 215, 184);
-const CODE_BG: Color = Color::Rgb(40, 40, 40);
 
 fn syntax_set() -> &'static SyntaxSet {
     static SS: OnceLock<SyntaxSet> = OnceLock::new();
     SS.get_or_init(SyntaxSet::load_defaults_newlines)
 }
 
-fn theme() -> &'static Theme {
+fn syntect_theme() -> &'static Theme {
     static TH: OnceLock<Theme> = OnceLock::new();
     TH.get_or_init(|| {
+        let name = theme::current().syntect;
         let ts = ThemeSet::load_defaults();
-        ts.themes["base16-ocean.dark"].clone()
+        ts.themes
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| ts.themes["base16-ocean.dark"].clone())
     })
 }
 
@@ -57,6 +61,7 @@ pub fn render(markdown: &str, max_width: usize) -> Vec<Line<'static>> {
 }
 
 struct Renderer {
+    theme: &'static MdTheme,
     lines: Vec<Line<'static>>,
     current: Vec<Span<'static>>,
     style: Style,
@@ -81,10 +86,12 @@ struct TableBuilder {
 
 impl Renderer {
     fn new(max_width: usize) -> Self {
+        let theme = theme::current();
         Self {
+            theme,
             lines: Vec::new(),
             current: Vec::new(),
-            style: Style::default().fg(TEXT_COLOR),
+            style: Style::default().fg(theme.text),
             style_stack: Vec::new(),
             list_stack: Vec::new(),
             bq_depth: 0,
@@ -125,7 +132,7 @@ impl Renderer {
 
     fn line_prefix(&self) -> Vec<Span<'static>> {
         (0..self.bq_depth)
-            .map(|_| Span::styled("│ ".to_string(), Style::default().fg(TEXT_COLOR)))
+            .map(|_| Span::styled("│ ".to_string(), Style::default().fg(self.theme.blockquote)))
             .collect()
     }
 
@@ -152,11 +159,12 @@ impl Renderer {
 
     fn emit_code_block(&mut self, code: &str, lang: Option<&str>) {
         let ss = syntax_set();
-        let theme = theme();
+        let st = syntect_theme();
+        let bg = self.theme.code_block_bg;
         let syntax = lang
             .map(|l| find_syntax(ss, l))
             .unwrap_or_else(|| ss.find_syntax_plain_text());
-        let mut hl = HighlightLines::new(syntax, theme);
+        let mut hl = HighlightLines::new(syntax, st);
 
         for raw_line in LinesWithEndings::from(code) {
             let ranges = hl.highlight_line(raw_line, ss).unwrap_or_default();
@@ -169,7 +177,7 @@ impl Renderer {
                 let fg = Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b);
                 spans.push(Span::styled(
                     piece.to_string(),
-                    Style::default().fg(fg).bg(CODE_BG),
+                    Style::default().fg(fg).bg(bg),
                 ));
             }
             self.lines.push(Line::from(spans));
@@ -188,7 +196,11 @@ impl Renderer {
                 }
             }
             Event::Code(t) => {
-                self.push_style(Style::default().fg(Color::Cyan).bg(Color::Rgb(40, 40, 40)));
+                self.push_style(
+                    Style::default()
+                        .fg(self.theme.code_inline_fg)
+                        .bg(self.theme.code_inline_bg),
+                );
                 self.text(&t);
                 self.pop_style();
             }
@@ -206,7 +218,7 @@ impl Renderer {
                 }
                 self.lines.push(Line::from(Span::styled(
                     "─ ─ ─ ─ ─ ─ ─ ─ ─ ─".to_string(),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(self.theme.rule),
                 )));
                 self.blank_line();
             }
@@ -221,7 +233,8 @@ impl Renderer {
         match tag {
             Tag::Paragraph => {}
             Tag::Heading { level, .. } => {
-                let (color, prefix) = heading_style(level);
+                let color = heading_color(self.theme, level);
+                let prefix = heading_prefix(level);
                 self.push_style(Style::default().fg(color).add_modifier(Modifier::BOLD));
                 self.text(prefix);
             }
@@ -251,7 +264,7 @@ impl Renderer {
                 };
                 self.text(&indent);
                 let saved = self.style;
-                self.style = self.style.patch(Style::default().fg(Color::DarkGray));
+                self.style = self.style.patch(Style::default().fg(self.theme.list_marker));
                 self.text(&marker);
                 self.style = saved;
             }
@@ -268,12 +281,12 @@ impl Renderer {
                 self.link_url = Some(dest_url.to_string());
                 self.push_style(
                     Style::default()
-                        .fg(Color::Blue)
+                        .fg(self.theme.link)
                         .add_modifier(Modifier::UNDERLINED),
                 );
             }
             Tag::Image { .. } => {
-                self.push_style(Style::default().fg(Color::Magenta));
+                self.push_style(Style::default().fg(self.theme.image));
                 self.text("[image: ");
             }
             Tag::Table(_) => {
@@ -345,7 +358,7 @@ impl Renderer {
                 self.pop_style();
                 if let Some(url) = self.link_url.take() {
                     let saved = self.style;
-                    self.style = self.style.patch(Style::default().fg(Color::DarkGray));
+                    self.style = self.style.patch(Style::default().fg(self.theme.link_url));
                     self.text(&format!(" ({url})"));
                     self.style = saved;
                 }
@@ -356,7 +369,7 @@ impl Renderer {
             }
             TagEnd::Table => {
                 if let Some(tb) = self.table.take() {
-                    for line in layout_table(&tb, self.max_width) {
+                    for line in layout_table(&tb, self.theme, self.max_width) {
                         self.lines.push(line);
                     }
                     self.blank_line();
@@ -400,18 +413,29 @@ fn strip_frontmatter(content: &str) -> &str {
     content
 }
 
-fn heading_style(level: HeadingLevel) -> (Color, &'static str) {
+fn heading_color(theme: &MdTheme, level: HeadingLevel) -> Color {
     match level {
-        HeadingLevel::H1 => (Color::Red, "═══ "),
-        HeadingLevel::H2 => (Color::Yellow, "── "),
-        HeadingLevel::H3 => (Color::Cyan, "▸ "),
-        HeadingLevel::H4 => (Color::Green, "▹ "),
-        HeadingLevel::H5 => (Color::Magenta, "• "),
-        HeadingLevel::H6 => (Color::Gray, "· "),
+        HeadingLevel::H1 => theme.h1,
+        HeadingLevel::H2 => theme.h2,
+        HeadingLevel::H3 => theme.h3,
+        HeadingLevel::H4 => theme.h4,
+        HeadingLevel::H5 => theme.h5,
+        HeadingLevel::H6 => theme.h6,
     }
 }
 
-fn layout_table(tb: &TableBuilder, max_width: usize) -> Vec<Line<'static>> {
+fn heading_prefix(level: HeadingLevel) -> &'static str {
+    match level {
+        HeadingLevel::H1 => "═══ ",
+        HeadingLevel::H2 => "── ",
+        HeadingLevel::H3 => "▸ ",
+        HeadingLevel::H4 => "▹ ",
+        HeadingLevel::H5 => "• ",
+        HeadingLevel::H6 => "· ",
+    }
+}
+
+fn layout_table(tb: &TableBuilder, theme: &MdTheme, max_width: usize) -> Vec<Line<'static>> {
     let n_cols = tb
         .headers
         .len()
@@ -421,7 +445,9 @@ fn layout_table(tb: &TableBuilder, max_width: usize) -> Vec<Line<'static>> {
     }
 
     let widths = fit_widths(compute_widths(tb, n_cols), max_width);
-    let border_style = Style::default().add_modifier(Modifier::BOLD);
+    let border_style = Style::default()
+        .fg(theme.table_border)
+        .add_modifier(Modifier::BOLD);
     let mut out: Vec<Line<'static>> = Vec::new();
 
     let make_border = |left: char, mid: char, right: char| -> Line<'static> {
@@ -442,12 +468,12 @@ fn layout_table(tb: &TableBuilder, max_width: usize) -> Vec<Line<'static>> {
     out.push(make_border('┌', '┬', '┐'));
 
     if !tb.headers.is_empty() {
-        emit_row(&mut out, &tb.headers, &widths, true);
+        emit_row(&mut out, &tb.headers, &widths, true, theme);
         out.push(make_border('├', '┼', '┤'));
     }
 
     for row in &tb.rows {
-        emit_row(&mut out, row, &widths, false);
+        emit_row(&mut out, row, &widths, false, theme);
     }
 
     out.push(make_border('└', '┴', '┘'));
@@ -515,7 +541,13 @@ fn fit_widths(mut widths: Vec<usize>, max_width: usize) -> Vec<usize> {
     widths
 }
 
-fn emit_row(out: &mut Vec<Line<'static>>, cells: &[String], widths: &[usize], is_header: bool) {
+fn emit_row(
+    out: &mut Vec<Line<'static>>,
+    cells: &[String],
+    widths: &[usize],
+    is_header: bool,
+    theme: &MdTheme,
+) {
     let wrapped: Vec<Vec<String>> = widths
         .iter()
         .enumerate()
@@ -529,12 +561,14 @@ fn emit_row(out: &mut Vec<Line<'static>>, cells: &[String], widths: &[usize], is
 
     let cell_style = if is_header {
         Style::default()
-            .fg(Color::White)
+            .fg(theme.table_header)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(TEXT_COLOR)
+        Style::default().fg(theme.text)
     };
-    let sep_style = Style::default().add_modifier(Modifier::BOLD);
+    let sep_style = Style::default()
+        .fg(theme.table_border)
+        .add_modifier(Modifier::BOLD);
 
     for row_line in 0..height {
         let mut spans: Vec<Span<'static>> = Vec::new();

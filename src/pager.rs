@@ -8,6 +8,7 @@ use ratatui::text::Text;
 use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap};
 
 use crate::render;
+use crate::theme;
 
 pub enum Source {
     File(PathBuf),
@@ -117,19 +118,24 @@ impl Pager {
         let [content_area, status_area] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
 
+        let bg_style = Style::default().bg(theme::current().bg);
+
         let h_pad = (content_area.width / 20).max(2);
         let name = self.source.display_name();
         let title = format!(" {name} ");
         let block = Block::default()
             .borders(Borders::ALL)
             .padding(Padding::horizontal(h_pad))
-            .title(title);
+            .title(title)
+            .style(bg_style);
         let inner = block.inner(content_area);
         self.viewport_height = inner.height;
 
         self.ensure_rendered(inner.width);
 
-        let paragraph = Paragraph::new(self.text.clone()).wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(self.text.clone())
+            .style(bg_style)
+            .wrap(Wrap { trim: false });
         let total_lines = paragraph.line_count(inner.width) as u16;
         let max_scroll = total_lines.saturating_sub(inner.height);
         self.scroll = self.scroll.min(max_scroll);
@@ -182,9 +188,13 @@ impl Pager {
             width: w,
             height: h,
         };
-        let block = Block::default().borders(Borders::ALL).title(" help ");
+        let bg_style = Style::default().bg(theme::current().bg);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" help ")
+            .style(bg_style);
         frame.render_widget(Clear, popup);
-        frame.render_widget(Paragraph::new(lines).block(block), popup);
+        frame.render_widget(Paragraph::new(lines).style(bg_style).block(block), popup);
     }
 
     fn reload(&mut self) -> Result<()> {
