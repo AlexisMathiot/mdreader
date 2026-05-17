@@ -23,17 +23,18 @@ Les références de fichiers pointent vers `~/Projects/glow` quand applicable.
 
 ## Quick wins (≈ 1 journée chacun)
 
-- [ ] **Raccourcis clavier manquants** (`ui/pager.go:189-244`) : `u/d` (demi-page), `b/f` (page), `e` (edit externe), `c` (copy), `r` (reload), `?` (toggle help). Squelette déjà en place dans `on_key`.
-- [ ] **Détection auto de stdin** (`main.go:213-222`) : `cat README.md | mdreader` sans argument. Test via `IsTerminal` (`std::io::IsTerminal`).
+- [x] **Raccourcis clavier** : `u/d` (demi-page), `b/f` (page), `r` (reload), `?` (toggle help) — faits dans `pager.rs:on_key`.
+- [ ] **Touche `e` edit externe** (`ui/editor.go`) : lance `$EDITOR` sur le fichier, recharge en sortie.
+- [ ] **Touche `c` copy** : copie le contenu rendu dans le presse-papier (crate `arboard` ou `copypasta`).
+- [x] **Détection auto de stdin** : `cat README.md | mdreader` sans argument — fait via `std::io::IsTerminal`.
 - [ ] **Mode pager** (`main.go:318-334`) : flag `-p` qui délègue à `$PAGER` / `less -r` au lieu du TUI.
-- [ ] **Frontmatter YAML strip** (`utils/utils.go`) : virer les blocs `---...---` en début de fichier avant parsing.
-- [ ] **Barre de statut avec % scroll** (`ui/pager.go:296-366`) : `self.scroll` + `total_lines` déjà dispo, pur cosmétique.
-- [ ] **Edit externe** (`ui/editor.go`) : touche `e` → lance `$EDITOR` sur le fichier, recharge en sortie.
+- [x] **Frontmatter YAML strip** : blocs `---...---` retirés avant parsing.
+- [x] **Barre de statut avec % scroll** : affichée dans `pager.rs:draw`.
 
 ## Configuration & thèmes (effort moyen)
 
 - [ ] **Fichier de config** (`config_cmd.go`, viper côté Glow) : TOML dans `$XDG_CONFIG_HOME/mdreader/config.toml` avec prefs (thème, width, mouse, etc.). Crates : `toml` + `serde` + `dirs`.
-- [ ] **Thèmes syntect multiples** : aujourd'hui `base16-ocean.dark` en dur dans `render.rs:26`. Ajouter flag `--theme` et exposer ceux de `ThemeSet::load_defaults()` : `InspiredGitHub`, `Solarized (dark)`, `Solarized (light)`, `base16-eighties.dark`, `base16-mocha.dark`, `base16-ocean.light`. Auto-détection clair/sombre via `termbg` plus tard.
+- [x] **Thèmes syntect multiples** : flag `--theme` exposant les presets de `ThemeSet::load_defaults()`. Auto-détection clair/sombre via `termbg` plus tard.
 
 ## Hors scope (apprentissage Rust)
 

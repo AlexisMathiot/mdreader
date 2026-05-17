@@ -4,17 +4,25 @@ mod theme;
 
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::thread;
 
 use anyhow::{Result, bail};
 use clap::Parser;
 use crossterm::ExecutableCommand;
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use notify::{EventKind, RecursiveMode, Watcher};
 use ratatui::prelude::*;
 
 use pager::Pager;
+
+enum AppEvent {
+    Key(KeyEvent),
+    FileChanged,
+}
 
 #[derive(Parser)]
 #[command(name = "mdreader", about = "terminal markdown reader")]
@@ -61,13 +69,49 @@ fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     pager: &mut Pager,
 ) -> Result<()> {
+    let (tx, rx) = mpsc::channel::<AppEvent>();
+
+    let key_tx = tx.clone();
+    thread::spawn(move || {
+        loop {
+            match event::read() {
+                Ok(Event::Key(key)) => {
+                    if key_tx.send(AppEvent::Key(key)).is_err() {
+                        break;
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+    });
+
+    let _watcher = pager.watch_path().map(|path| {
+        let watch_tx = tx.clone();
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if let Ok(event) = res
+                && !matches!(event.kind, EventKind::Access(_))
+            {
+                let _ = watch_tx.send(AppEvent::FileChanged);
+            }
+        })?;
+        watcher.watch(path, RecursiveMode::NonRecursive)?;
+        Ok::<_, notify::Error>(watcher)
+    }).transpose()?;
+
+    drop(tx);
+
     while !pager.should_quit {
         terminal.draw(|frame| pager.draw(frame))?;
-
-        if let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
-            pager.on_key(key.code, key.modifiers);
+        match rx.recv() {
+            Ok(AppEvent::Key(key)) if key.kind == KeyEventKind::Press => {
+                pager.on_key(key.code, key.modifiers);
+            }
+            Ok(AppEvent::FileChanged) => {
+                pager.reload()?;
+            }
+            Ok(_) => {}
+            Err(_) => break,
         }
     }
     Ok(())

@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -197,7 +197,14 @@ impl Pager {
         frame.render_widget(Paragraph::new(lines).style(bg_style).block(block), popup);
     }
 
-    fn reload(&mut self) -> Result<()> {
+    pub fn watch_path(&self) -> Option<&Path> {
+        match &self.source {
+            Source::File(path) => Some(path),
+            Source::Stdin => None,
+        }
+    }
+
+    pub fn reload(&mut self) -> Result<()> {
         let Source::File(path) = &self.source else {
             return Ok(());
         };
