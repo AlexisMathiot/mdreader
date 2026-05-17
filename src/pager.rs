@@ -29,6 +29,7 @@ pub struct Pager {
     text: Text<'static>,
     last_width: u16,
     source: Source,
+    max_width: Option<u16>,
     scroll: u16,
     viewport_height: u16,
     show_help: bool,
@@ -36,22 +37,23 @@ pub struct Pager {
 }
 
 impl Pager {
-    pub fn from_path(path: PathBuf) -> Result<Self> {
+    pub fn from_path(path: PathBuf, max_width: Option<u16>) -> Result<Self> {
         let content = fs::read_to_string(&path)
             .with_context(|| format!("lecture de {}", path.display()))?;
-        Ok(Self::new(Source::File(path), content))
+        Ok(Self::new(Source::File(path), content, max_width))
     }
 
-    pub fn from_stdin(content: String) -> Self {
-        Self::new(Source::Stdin, content)
+    pub fn from_stdin(content: String, max_width: Option<u16>) -> Self {
+        Self::new(Source::Stdin, content, max_width)
     }
 
-    fn new(source: Source, content: String) -> Self {
+    fn new(source: Source, content: String, max_width: Option<u16>) -> Self {
         Self {
             content,
             text: Text::default(),
             last_width: 0,
             source,
+            max_width,
             scroll: 0,
             viewport_height: 0,
             show_help: false,
@@ -115,12 +117,31 @@ impl Pager {
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
-        let [content_area, status_area] =
+        let [full_content, status_area] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
 
         let bg_style = Style::default().bg(theme::current().bg);
 
-        let h_pad = (content_area.width / 20).max(2);
+        let h_pad = if self.max_width.is_some() {
+            2
+        } else {
+            (full_content.width / 20).max(2)
+        };
+
+        let content_area = match self.max_width {
+            Some(max) => {
+                let desired = max.saturating_add(2 + 2 * h_pad);
+                let w = desired.min(full_content.width);
+                Rect {
+                    x: full_content.x + (full_content.width - w) / 2,
+                    y: full_content.y,
+                    width: w,
+                    height: full_content.height,
+                }
+            }
+            None => full_content,
+        };
+
         let name = self.source.display_name();
         let title = format!(" {name} ");
         let block = Block::default()

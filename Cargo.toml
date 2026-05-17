@@ -7,8 +7,11 @@ edition = "2024"
 anyhow = "1.0"
 clap = { version = "4.6.1", features = ["derive"] }
 crossterm = "0.29"
+dirs = "5"
 notify = "8"
 pulldown-cmark = "0.13"
 ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
+serde = { version = "1", features = ["derive"] }
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+toml = "0.8"
 unicode-width = "0.2"

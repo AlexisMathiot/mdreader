@@ -1,3 +1,4 @@
+mod config;
 mod pager;
 mod render;
 mod theme;
@@ -31,22 +32,34 @@ struct Cli {
     file: Option<PathBuf>,
 
     /// theme preset (dark, dracula, tokyo-night, light)
-    #[arg(long, default_value = theme::DEFAULT)]
-    theme: String,
+    #[arg(long)]
+    theme: Option<String>,
+
+    /// max render width in columns
+    #[arg(long, short = 'w')]
+    width: Option<u16>,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    theme::set(&cli.theme)?;
+    let cfg = config::Config::load()?;
+
+    let theme_name = cli
+        .theme
+        .or(cfg.theme)
+        .unwrap_or_else(|| theme::DEFAULT.into());
+    theme::set(&theme_name)?;
+
+    let max_width = cli.width.or(cfg.width);
 
     let mut pager = match cli.file {
-        Some(path) => Pager::from_path(path)?,
+        Some(path) => Pager::from_path(path, max_width)?,
         None => {
             if io::stdin().is_terminal() {
                 bail!("usage: mdreader <fichier.md>  (or pipe markdown on stdin)");
             }
             let content = io::read_to_string(io::stdin())?;
-            Pager::from_stdin(content)
+            Pager::from_stdin(content, max_width)
         }
     };
 
