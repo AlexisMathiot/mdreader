@@ -25,7 +25,7 @@ Les références de fichiers pointent vers `~/Projects/glow` quand applicable.
 
 - [x] **Raccourcis clavier** : `u/d` (demi-page), `b/f` (page), `r` (reload), `?` (toggle help) — faits dans `pager.rs:on_key`.
 - [ ] **Touche `e` edit externe** (`ui/editor.go`) : lance `$EDITOR` sur le fichier, recharge en sortie.
-- [ ] **Touche `c` copy** : copie le contenu rendu dans le presse-papier (crate `arboard` ou `copypasta`).
+- [x] **Touche `c` copy** : copie le markdown brut dans le presse-papier via `wl-copy`/`xclip` en sous-process (persiste après quit).
 - [x] **Détection auto de stdin** : `cat README.md | mdreader` sans argument — fait via `std::io::IsTerminal`.
 - [ ] **Mode pager** (`main.go:318-334`) : flag `-p` qui délègue à `$PAGER` / `less -r` au lieu du TUI.
 - [x] **Frontmatter YAML strip** : blocs `---...---` retirés avant parsing.
@@ -33,7 +33,7 @@ Les références de fichiers pointent vers `~/Projects/glow` quand applicable.
 
 ## Configuration & thèmes (effort moyen)
 
-- [ ] **Fichier de config** (`config_cmd.go`, viper côté Glow) : TOML dans `$XDG_CONFIG_HOME/mdreader/config.toml` avec prefs (thème, width, mouse, etc.). Crates : `toml` + `serde` + `dirs`.
+- [x] **Fichier de config** : TOML dans `$XDG_CONFIG_HOME/mdreader/config.toml` (`theme` + `width`). CLI > config > defaults. Crates : `serde` + `toml` + `dirs`.
 - [x] **Thèmes syntect multiples** : flag `--theme` exposant les presets de `ThemeSet::load_defaults()`. Auto-détection clair/sombre via `termbg` plus tard.
 
 ## Hors scope (apprentissage Rust)

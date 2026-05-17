@@ -1,5 +1,7 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -33,6 +35,7 @@ pub struct Pager {
     scroll: u16,
     viewport_height: u16,
     show_help: bool,
+    status_msg: Option<String>,
     pub should_quit: bool,
 }
 
@@ -57,6 +60,7 @@ impl Pager {
             scroll: 0,
             viewport_height: 0,
             show_help: false,
+            status_msg: None,
             should_quit: false,
         }
     }
@@ -74,6 +78,7 @@ impl Pager {
             self.should_quit = true;
             return;
         }
+        self.status_msg = None;
         if self.show_help {
             match code {
                 KeyCode::Char('?') | KeyCode::Esc => self.show_help = false,
@@ -85,6 +90,7 @@ impl Pager {
         match code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') => self.show_help = true,
+            KeyCode::Char('c') => self.copy_to_clipboard(),
             KeyCode::Char('j') | KeyCode::Down => {
                 self.scroll = self.scroll.saturating_add(1);
             }
@@ -171,7 +177,10 @@ impl Pager {
         } else {
             (self.scroll as u32 * 100 / max_scroll as u32) as u16
         };
-        let status = format!(" {name}  {pct}%   ?: help   q: quit ");
+        let status = match &self.status_msg {
+            Some(msg) => format!(" {name}  {pct}%   {msg}   ?: help   q: quit "),
+            None => format!(" {name}  {pct}%   ?: help   q: quit "),
+        };
         frame.render_widget(
             Paragraph::new(status).style(Style::default().add_modifier(Modifier::REVERSED)),
             status_area,
@@ -196,6 +205,7 @@ impl Pager {
         if matches!(self.source, Source::File(_)) {
             lines.push(Line::from(" r            reload"));
         }
+        lines.push(Line::from(" c            copy to clipboard"));
         lines.push(Line::from(" ?            toggle help"));
         lines.push(Line::from(" q / Ctrl+C   quit"));
         let popup_w = 36u16;
@@ -225,6 +235,13 @@ impl Pager {
         }
     }
 
+    fn copy_to_clipboard(&mut self) {
+        self.status_msg = Some(match copy_via_subprocess(&self.content) {
+            Ok(()) => "copied".into(),
+            Err(e) => format!("copy failed: {e}"),
+        });
+    }
+
     pub fn reload(&mut self) -> Result<()> {
         let Source::File(path) = &self.source else {
             return Ok(());
@@ -234,4 +251,24 @@ impl Pager {
         self.last_width = 0;
         Ok(())
     }
+}
+
+fn copy_via_subprocess(content: &str) -> std::io::Result<()> {
+    let (cmd, args): (&str, &[&str]) = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        ("wl-copy", &[])
+    } else {
+        ("xclip", &["-selection", "clipboard"])
+    };
+    let mut child = Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    child
+        .stdin
+        .take()
+        .expect("stdin piped")
+        .write_all(content.as_bytes())?;
+    Ok(())
 }
