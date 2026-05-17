@@ -36,6 +36,7 @@ pub struct Pager {
     viewport_height: u16,
     show_help: bool,
     status_msg: Option<String>,
+    edit_requested: bool,
     pub should_quit: bool,
 }
 
@@ -61,6 +62,7 @@ impl Pager {
             viewport_height: 0,
             show_help: false,
             status_msg: None,
+            edit_requested: false,
             should_quit: false,
         }
     }
@@ -118,8 +120,27 @@ impl Pager {
             KeyCode::Char('r') => {
                 let _ = self.reload();
             }
+            KeyCode::Char('e') => {
+                if matches!(self.source, Source::File(_)) {
+                    self.edit_requested = true;
+                }
+            }
             _ => {}
         }
+    }
+
+    pub fn take_edit_request(&mut self) -> Option<PathBuf> {
+        if self.edit_requested
+            && let Source::File(path) = &self.source
+        {
+            self.edit_requested = false;
+            return Some(path.clone());
+        }
+        None
+    }
+
+    pub fn set_status(&mut self, msg: String) {
+        self.status_msg = Some(msg);
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
@@ -204,6 +225,7 @@ impl Pager {
         ];
         if matches!(self.source, Source::File(_)) {
             lines.push(Line::from(" r            reload"));
+            lines.push(Line::from(" e            edit ($EDITOR)"));
         }
         lines.push(Line::from(" c            copy to clipboard"));
         lines.push(Line::from(" ?            toggle help"));

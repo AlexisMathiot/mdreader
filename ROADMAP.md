@@ -6,17 +6,20 @@ Les références de fichiers pointent vers `~/Projects/glow` quand applicable.
 ## Gros morceaux structurels
 
 ### 1. Stash mode + file browser
+
 - **Source Glow** : `ui/stash.go`, `ui/stashitem.go`
 - Lancement sans argument → scanne récursivement le dossier courant pour trouver tous les `.md`, affiche une liste navigable avec fuzzy-search (`/`), tri par date, pagination.
 - C'est ce qui fait que Glow se ressent comme un outil et pas juste un viewer.
 - Composants : state machine (mode stash vs pager), recherche fuzzy (crate `nucleo` ou `fuzzy-matcher`), scan de dossier (`walkdir`).
 
 ### 2. Sources distantes
+
 - **Source Glow** : `github.go`, `gitlab.go`, `url.go`
 - `mdreader owner/repo`, `mdreader github://...`, `mdreader https://...` → résolution via API GitHub/GitLab pour récupérer le README.
 - Composants : HTTP client (`reqwest` async ou `ureq` blocking), parsing JSON (`serde_json`), résolution d'URL.
 
 ### 3. Auto-reload sur changement de fichier
+
 - **Source Glow** : `ui/pager.go:482-531` (fsnotify)
 - Surveille le fichier courant et recharge automatiquement à chaque modification sur disque.
 - Composant : crate `notify` (channels + watcher).
@@ -24,10 +27,10 @@ Les références de fichiers pointent vers `~/Projects/glow` quand applicable.
 ## Quick wins (≈ 1 journée chacun)
 
 - [x] **Raccourcis clavier** : `u/d` (demi-page), `b/f` (page), `r` (reload), `?` (toggle help) — faits dans `pager.rs:on_key`.
-- [ ] **Touche `e` edit externe** (`ui/editor.go`) : lance `$EDITOR` sur le fichier, recharge en sortie.
+- [x] **Touche `e` edit externe** : suspend le TUI, lance `$EDITOR` sur le fichier, restaure le TUI et recharge à la sortie.
 - [x] **Touche `c` copy** : copie le markdown brut dans le presse-papier via `wl-copy`/`xclip` en sous-process (persiste après quit).
 - [x] **Détection auto de stdin** : `cat README.md | mdreader` sans argument — fait via `std::io::IsTerminal`.
-- [ ] **Mode pager** (`main.go:318-334`) : flag `-p` qui délègue à `$PAGER` / `less -r` au lieu du TUI.
+- [x] **Mode pager** : flag `-p` qui rend en ANSI et pipe vers `$PAGER` (défaut `less -R`). Convertisseur `lines_to_ansi` dans `render.rs`.
 - [x] **Frontmatter YAML strip** : blocs `---...---` retirés avant parsing.
 - [x] **Barre de statut avec % scroll** : affichée dans `pager.rs:draw`.
 

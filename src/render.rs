@@ -693,3 +693,91 @@ fn trim_trailing_space(s: &mut String, w: &mut usize) {
         *w = w.saturating_sub(1);
     }
 }
+
+pub fn lines_to_ansi(lines: &[Line<'_>]) -> String {
+    let mut out = String::new();
+    for line in lines {
+        for span in &line.spans {
+            let sgr = sgr_open(&span.style);
+            if !sgr.is_empty() {
+                out.push_str(&sgr);
+            }
+            out.push_str(&span.content);
+            if !sgr.is_empty() {
+                out.push_str("\x1b[0m");
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn sgr_open(style: &Style) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    if let Some(c) = style.fg {
+        push_color(&mut parts, c, true);
+    }
+    if let Some(c) = style.bg {
+        push_color(&mut parts, c, false);
+    }
+
+    let mods: [(Modifier, u32); 6] = [
+        (Modifier::BOLD, 1),
+        (Modifier::DIM, 2),
+        (Modifier::ITALIC, 3),
+        (Modifier::UNDERLINED, 4),
+        (Modifier::REVERSED, 7),
+        (Modifier::CROSSED_OUT, 9),
+    ];
+    for (m, code) in mods {
+        if style.add_modifier.contains(m) {
+            parts.push(code.to_string());
+        }
+    }
+
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("\x1b[{}m", parts.join(";"))
+    }
+}
+
+fn push_color(out: &mut Vec<String>, c: Color, fg: bool) {
+    let base = if fg { 30 } else { 40 };
+    let bright = if fg { 90 } else { 100 };
+    let extended = if fg { 38 } else { 48 };
+    let reset = if fg { 39 } else { 49 };
+
+    match c {
+        Color::Reset => out.push(reset.to_string()),
+        Color::Black => out.push(base.to_string()),
+        Color::Red => out.push((base + 1).to_string()),
+        Color::Green => out.push((base + 2).to_string()),
+        Color::Yellow => out.push((base + 3).to_string()),
+        Color::Blue => out.push((base + 4).to_string()),
+        Color::Magenta => out.push((base + 5).to_string()),
+        Color::Cyan => out.push((base + 6).to_string()),
+        Color::Gray => out.push((base + 7).to_string()),
+        Color::DarkGray => out.push(bright.to_string()),
+        Color::LightRed => out.push((bright + 1).to_string()),
+        Color::LightGreen => out.push((bright + 2).to_string()),
+        Color::LightYellow => out.push((bright + 3).to_string()),
+        Color::LightBlue => out.push((bright + 4).to_string()),
+        Color::LightMagenta => out.push((bright + 5).to_string()),
+        Color::LightCyan => out.push((bright + 6).to_string()),
+        Color::White => out.push((bright + 7).to_string()),
+        Color::Rgb(r, g, b) => {
+            out.push(extended.to_string());
+            out.push("2".into());
+            out.push(r.to_string());
+            out.push(g.to_string());
+            out.push(b.to_string());
+        }
+        Color::Indexed(n) => {
+            out.push(extended.to_string());
+            out.push("5".into());
+            out.push(n.to_string());
+        }
+    }
+}

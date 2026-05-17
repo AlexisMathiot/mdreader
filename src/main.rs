@@ -3,15 +3,17 @@ mod pager;
 mod render;
 mod theme;
 
-use std::io::{self, IsTerminal};
-use std::path::PathBuf;
+use std::fs;
+use std::io::{self, IsTerminal, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::mpsc;
-use std::thread;
+use std::time::Duration;
 
 use anyhow::{Result, bail};
 use clap::Parser;
 use crossterm::ExecutableCommand;
-use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -20,10 +22,7 @@ use ratatui::prelude::*;
 
 use pager::Pager;
 
-enum AppEvent {
-    Key(KeyEvent),
-    FileChanged,
-}
+const POLL_TIMEOUT: Duration = Duration::from_millis(200);
 
 #[derive(Parser)]
 #[command(name = "mdreader", about = "terminal markdown reader")]
@@ -38,6 +37,10 @@ struct Cli {
     /// max render width in columns
     #[arg(long, short = 'w')]
     width: Option<u16>,
+
+    /// print rendered markdown to $PAGER (default `less -R`) instead of the TUI
+    #[arg(long, short = 'p')]
+    pager: bool,
 }
 
 fn main() -> Result<()> {
@@ -51,6 +54,10 @@ fn main() -> Result<()> {
     theme::set(&theme_name)?;
 
     let max_width = cli.width.or(cfg.width);
+
+    if cli.pager {
+        return run_pager_mode(cli.file, max_width);
+    }
 
     let mut pager = match cli.file {
         Some(path) => Pager::from_path(path, max_width)?,
@@ -82,50 +89,133 @@ fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     pager: &mut Pager,
 ) -> Result<()> {
-    let (tx, rx) = mpsc::channel::<AppEvent>();
+    let (tx, rx) = mpsc::channel::<()>();
 
-    let key_tx = tx.clone();
-    thread::spawn(move || {
-        loop {
-            match event::read() {
-                Ok(Event::Key(key)) => {
-                    if key_tx.send(AppEvent::Key(key)).is_err() {
-                        break;
+    let _watcher = pager
+        .watch_path()
+        .map(|path| {
+            let watch_tx = tx.clone();
+            let mut watcher =
+                notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                    if let Ok(event) = res
+                        && !matches!(event.kind, EventKind::Access(_))
+                    {
+                        let _ = watch_tx.send(());
                     }
-                }
-                Ok(_) => {}
-                Err(_) => break,
-            }
-        }
-    });
-
-    let _watcher = pager.watch_path().map(|path| {
-        let watch_tx = tx.clone();
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if let Ok(event) = res
-                && !matches!(event.kind, EventKind::Access(_))
-            {
-                let _ = watch_tx.send(AppEvent::FileChanged);
-            }
-        })?;
-        watcher.watch(path, RecursiveMode::NonRecursive)?;
-        Ok::<_, notify::Error>(watcher)
-    }).transpose()?;
-
+                })?;
+            watcher.watch(path, RecursiveMode::NonRecursive)?;
+            Ok::<_, notify::Error>(watcher)
+        })
+        .transpose()?;
     drop(tx);
 
+    let mut dirty = true;
     while !pager.should_quit {
-        terminal.draw(|frame| pager.draw(frame))?;
-        match rx.recv() {
-            Ok(AppEvent::Key(key)) if key.kind == KeyEventKind::Press => {
-                pager.on_key(key.code, key.modifiers);
+        if dirty {
+            terminal.draw(|frame| pager.draw(frame))?;
+            dirty = false;
+        }
+
+        if event::poll(POLL_TIMEOUT)?
+            && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            pager.on_key(key.code, key.modifiers);
+            dirty = true;
+        }
+
+        let mut reload_needed = false;
+        while rx.try_recv().is_ok() {
+            reload_needed = true;
+        }
+        if reload_needed {
+            pager.reload()?;
+            dirty = true;
+        }
+
+        if let Some(path) = pager.take_edit_request() {
+            match run_editor(terminal, &path) {
+                Ok(()) => pager.reload()?,
+                Err(e) => pager.set_status(format!("editor failed: {e}")),
             }
-            Ok(AppEvent::FileChanged) => {
-                pager.reload()?;
-            }
-            Ok(_) => {}
-            Err(_) => break,
+            dirty = true;
         }
     }
     Ok(())
+}
+
+fn run_editor(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    path: &Path,
+) -> io::Result<()> {
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "set $EDITOR (e.g. 'export EDITOR=nvim')",
+            )
+        })?;
+
+    terminal.backend_mut().execute(LeaveAlternateScreen)?;
+    disable_raw_mode()?;
+
+    let status = Command::new(&editor).arg(path).status();
+
+    enable_raw_mode()?;
+    terminal.backend_mut().execute(EnterAlternateScreen)?;
+    terminal.clear()?;
+
+    status?;
+    Ok(())
+}
+
+fn run_pager_mode(file: Option<PathBuf>, max_width: Option<u16>) -> Result<()> {
+    let content = match file {
+        Some(path) => fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("lecture de {}: {e}", path.display()))?,
+        None => {
+            if io::stdin().is_terminal() {
+                bail!("usage: mdreader -p <fichier.md>  (or pipe markdown on stdin)");
+            }
+            io::read_to_string(io::stdin())?
+        }
+    };
+
+    let width = max_width
+        .map(|w| w as usize)
+        .unwrap_or_else(|| {
+            crossterm::terminal::size()
+                .map(|(w, _)| w as usize)
+                .unwrap_or(100)
+        });
+
+    let lines = render::render(&content, width);
+    let ansi = render::lines_to_ansi(&lines);
+
+    let (cmd, args) = pager_command();
+    let mut child = Command::new(&cmd)
+        .args(&args)
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("spawn {cmd}: {e}"))?;
+    child
+        .stdin
+        .take()
+        .expect("stdin piped")
+        .write_all(ansi.as_bytes())?;
+    child.wait()?;
+    Ok(())
+}
+
+fn pager_command() -> (String, Vec<String>) {
+    if let Ok(p) = std::env::var("PAGER")
+        && !p.trim().is_empty()
+    {
+        let mut parts = p.split_whitespace().map(String::from);
+        if let Some(cmd) = parts.next() {
+            return (cmd, parts.collect());
+        }
+    }
+    ("less".into(), vec!["-R".into()])
 }
