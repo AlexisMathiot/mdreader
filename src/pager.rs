@@ -40,6 +40,8 @@ pub struct Pager {
     show_help: bool,
     status_msg: Option<String>,
     edit_requested: bool,
+    allow_back: bool,
+    back_requested: bool,
     pub should_quit: bool,
 }
 
@@ -74,8 +76,18 @@ impl Pager {
             show_help: false,
             status_msg: None,
             edit_requested: false,
+            allow_back: false,
+            back_requested: false,
             should_quit: false,
         }
+    }
+
+    pub fn set_allow_back(&mut self, allow: bool) {
+        self.allow_back = allow;
+    }
+
+    pub fn take_back_request(&mut self) -> bool {
+        std::mem::take(&mut self.back_requested)
     }
 
     fn ensure_rendered(&mut self, width: u16) {
@@ -95,13 +107,18 @@ impl Pager {
         if self.show_help {
             match code {
                 KeyCode::Char('?') | KeyCode::Esc => self.show_help = false,
-                KeyCode::Char('q') => self.should_quit = true,
+                KeyCode::Char('q') => self.quit_or_back(),
                 _ => {}
             }
             return;
         }
         match code {
-            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Char('q') => self.quit_or_back(),
+            KeyCode::Esc => {
+                if self.allow_back {
+                    self.back_requested = true;
+                }
+            }
             KeyCode::Char('?') => self.show_help = true,
             KeyCode::Char('c') => self.copy_to_clipboard(),
             KeyCode::Char('j') | KeyCode::Down => {
@@ -137,6 +154,14 @@ impl Pager {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn quit_or_back(&mut self) {
+        if self.allow_back {
+            self.back_requested = true;
+        } else {
+            self.should_quit = true;
         }
     }
 
@@ -209,9 +234,10 @@ impl Pager {
         } else {
             (self.scroll as u32 * 100 / max_scroll as u32) as u16
         };
+        let exit_hint = if self.allow_back { "q: back" } else { "q: quit" };
         let status = match &self.status_msg {
-            Some(msg) => format!(" {name}  {pct}%   {msg}   ?: help   q: quit "),
-            None => format!(" {name}  {pct}%   ?: help   q: quit "),
+            Some(msg) => format!(" {name}  {pct}%   {msg}   ?: help   {exit_hint} "),
+            None => format!(" {name}  {pct}%   ?: help   {exit_hint} "),
         };
         frame.render_widget(
             Paragraph::new(status).style(Style::default().add_modifier(Modifier::REVERSED)),
@@ -240,7 +266,12 @@ impl Pager {
         }
         lines.push(Line::from(" c            copy to clipboard"));
         lines.push(Line::from(" ?            toggle help"));
-        lines.push(Line::from(" q / Ctrl+C   quit"));
+        if self.allow_back {
+            lines.push(Line::from(" q / esc      back to list"));
+            lines.push(Line::from(" Ctrl+C       quit"));
+        } else {
+            lines.push(Line::from(" q / Ctrl+C   quit"));
+        }
         let popup_w = 36u16;
         let popup_h = lines.len() as u16 + 2;
         let area = frame.area();

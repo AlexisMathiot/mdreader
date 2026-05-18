@@ -8,9 +8,8 @@ Les références de fichiers pointent vers `~/Projects/glow` quand applicable.
 ### 1. Stash mode + file browser
 
 - **Source Glow** : `ui/stash.go`, `ui/stashitem.go`
-- Lancement sans argument → scanne récursivement le dossier courant pour trouver tous les `.md`, affiche une liste navigable avec fuzzy-search (`/`), tri par date, pagination.
-- C'est ce qui fait que Glow se ressent comme un outil et pas juste un viewer.
-- Composants : state machine (mode stash vs pager), recherche fuzzy (crate `nucleo` ou `fuzzy-matcher`), scan de dossier (`walkdir`).
+- [x] Lancement sans argument → scan récursif des `.md` du dossier courant (skip dirs cachés / `target` / `node_modules`), tri par mtime desc, navigation `j/k`, fuzzy filter `/` (nucleo-matcher), Enter pour ouvrir, q/Esc pour revenir.
+- Implé : `src/stash.rs` + state machine dans `main.rs` (`run_app` → `run_stash_loop` ↔ `run_pager_loop`). Pager a maintenant un mode `allow_back` qui change `q`/Esc en "retour".
 
 ### 2. Sources distantes
 

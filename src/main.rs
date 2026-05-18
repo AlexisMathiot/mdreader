@@ -2,6 +2,7 @@ mod config;
 mod pager;
 mod remote;
 mod render;
+mod stash;
 mod theme;
 
 use std::fs;
@@ -22,6 +23,7 @@ use notify::{EventKind, RecursiveMode, Watcher};
 use ratatui::prelude::*;
 
 use pager::Pager;
+use stash::Stash;
 
 const POLL_TIMEOUT: Duration = Duration::from_millis(200);
 
@@ -60,18 +62,24 @@ fn main() -> Result<()> {
         return run_pager_mode(cli.target, max_width);
     }
 
-    let mut pager = match cli.target.as_deref().map(remote::parse) {
-        Some(remote::Input::Local(path)) => Pager::from_path(path, max_width)?,
+    enum Start {
+        Pager(Pager),
+        Stash(Stash),
+    }
+
+    let start = match cli.target.as_deref().map(remote::parse) {
+        Some(remote::Input::Local(path)) => Start::Pager(Pager::from_path(path, max_width)?),
         Some(input) => {
             let fetched = remote::fetch(&input)?;
-            Pager::from_remote(fetched, max_width)
+            Start::Pager(Pager::from_remote(fetched, max_width))
         }
         None => {
             if io::stdin().is_terminal() {
-                bail!("usage: mdreader <fichier.md|url|owner/repo>  (or pipe markdown on stdin)");
+                Start::Stash(Stash::scan(".")?)
+            } else {
+                let content = io::read_to_string(io::stdin())?;
+                Start::Pager(Pager::from_stdin(content, max_width))
             }
-            let content = io::read_to_string(io::stdin())?;
-            Pager::from_stdin(content, max_width)
         }
     };
 
@@ -81,7 +89,10 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let res = run(&mut terminal, &mut pager);
+    let res = match start {
+        Start::Pager(mut pager) => run_pager_loop(&mut terminal, &mut pager).map(|_| ()),
+        Start::Stash(stash) => run_app(&mut terminal, stash, max_width),
+    };
 
     disable_raw_mode()?;
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
@@ -90,10 +101,65 @@ fn main() -> Result<()> {
     res
 }
 
-fn run(
+enum PagerExit {
+    Quit,
+    Back,
+}
+
+enum StashExit {
+    Quit,
+    Open(std::path::PathBuf),
+}
+
+fn run_app(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    mut stash: Stash,
+    max_width: Option<u16>,
+) -> Result<()> {
+    loop {
+        let path = match run_stash_loop(terminal, &mut stash)? {
+            StashExit::Quit => return Ok(()),
+            StashExit::Open(p) => p,
+        };
+        let mut pager = Pager::from_path(path, max_width)?;
+        pager.set_allow_back(true);
+        match run_pager_loop(terminal, &mut pager)? {
+            PagerExit::Quit => return Ok(()),
+            PagerExit::Back => continue,
+        }
+    }
+}
+
+fn run_stash_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    stash: &mut Stash,
+) -> Result<StashExit> {
+    let mut dirty = true;
+    loop {
+        if stash.should_quit {
+            return Ok(StashExit::Quit);
+        }
+        if let Some(path) = stash.take_open_request() {
+            return Ok(StashExit::Open(path));
+        }
+        if dirty {
+            terminal.draw(|frame| stash.draw(frame))?;
+            dirty = false;
+        }
+        if event::poll(POLL_TIMEOUT)?
+            && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            stash.on_key(key.code, key.modifiers);
+            dirty = true;
+        }
+    }
+}
+
+fn run_pager_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     pager: &mut Pager,
-) -> Result<()> {
+) -> Result<PagerExit> {
     let (tx, rx) = mpsc::channel::<()>();
 
     let _watcher = pager
@@ -115,7 +181,14 @@ fn run(
     drop(tx);
 
     let mut dirty = true;
-    while !pager.should_quit {
+    loop {
+        if pager.should_quit {
+            return Ok(PagerExit::Quit);
+        }
+        if pager.take_back_request() {
+            return Ok(PagerExit::Back);
+        }
+
         if dirty {
             terminal.draw(|frame| pager.draw(frame))?;
             dirty = false;
@@ -146,7 +219,6 @@ fn run(
             dirty = true;
         }
     }
-    Ok(())
 }
 
 fn run_editor(
