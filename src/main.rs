@@ -1,11 +1,12 @@
 mod config;
 mod pager;
+mod remote;
 mod render;
 mod theme;
 
 use std::fs;
 use std::io::{self, IsTerminal, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -27,8 +28,8 @@ const POLL_TIMEOUT: Duration = Duration::from_millis(200);
 #[derive(Parser)]
 #[command(name = "mdreader", about = "terminal markdown reader")]
 struct Cli {
-    /// markdown file to display (reads stdin if omitted and stdin is piped)
-    file: Option<PathBuf>,
+    /// local path, https URL, or owner/repo (reads stdin if omitted and stdin is piped)
+    target: Option<String>,
 
     /// theme preset (dark, dracula, tokyo-night, light)
     #[arg(long)]
@@ -56,14 +57,18 @@ fn main() -> Result<()> {
     let max_width = cli.width.or(cfg.width);
 
     if cli.pager {
-        return run_pager_mode(cli.file, max_width);
+        return run_pager_mode(cli.target, max_width);
     }
 
-    let mut pager = match cli.file {
-        Some(path) => Pager::from_path(path, max_width)?,
+    let mut pager = match cli.target.as_deref().map(remote::parse) {
+        Some(remote::Input::Local(path)) => Pager::from_path(path, max_width)?,
+        Some(input) => {
+            let fetched = remote::fetch(&input)?;
+            Pager::from_remote(fetched, max_width)
+        }
         None => {
             if io::stdin().is_terminal() {
-                bail!("usage: mdreader <fichier.md>  (or pipe markdown on stdin)");
+                bail!("usage: mdreader <fichier.md|url|owner/repo>  (or pipe markdown on stdin)");
             }
             let content = io::read_to_string(io::stdin())?;
             Pager::from_stdin(content, max_width)
@@ -170,13 +175,14 @@ fn run_editor(
     Ok(())
 }
 
-fn run_pager_mode(file: Option<PathBuf>, max_width: Option<u16>) -> Result<()> {
-    let content = match file {
-        Some(path) => fs::read_to_string(&path)
+fn run_pager_mode(target: Option<String>, max_width: Option<u16>) -> Result<()> {
+    let content = match target.as_deref().map(remote::parse) {
+        Some(remote::Input::Local(path)) => fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("lecture de {}: {e}", path.display()))?,
+        Some(input) => remote::fetch(&input)?.content,
         None => {
             if io::stdin().is_terminal() {
-                bail!("usage: mdreader -p <fichier.md>  (or pipe markdown on stdin)");
+                bail!("usage: mdreader -p <fichier.md|url|owner/repo>  (or pipe markdown on stdin)");
             }
             io::read_to_string(io::stdin())?
         }

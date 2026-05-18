@@ -15,8 +15,8 @@ Les références de fichiers pointent vers `~/Projects/glow` quand applicable.
 ### 2. Sources distantes
 
 - **Source Glow** : `github.go`, `gitlab.go`, `url.go`
-- `mdreader owner/repo`, `mdreader github://...`, `mdreader https://...` → résolution via API GitHub/GitLab pour récupérer le README.
-- Composants : HTTP client (`reqwest` async ou `ureq` blocking), parsing JSON (`serde_json`), résolution d'URL.
+- [x] `mdreader owner/repo` (résolution via API GitHub) et `mdreader https://...` (fetch direct) — fait dans `remote.rs` avec `reqwest::blocking`. Support `GITHUB_TOKEN` pour éviter rate-limit. Reload (`r`) re-fetch.
+- [ ] GitLab (`gitlab://owner/repo` ou équivalent) — pas encore fait.
 
 ### 3. Auto-reload sur changement de fichier
 

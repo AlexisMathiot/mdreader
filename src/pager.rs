@@ -9,12 +9,14 @@ use ratatui::prelude::*;
 use ratatui::text::Text;
 use ratatui::widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap};
 
+use crate::remote;
 use crate::render;
 use crate::theme;
 
 pub enum Source {
     File(PathBuf),
     Stdin,
+    Remote { display: String, raw_url: String },
 }
 
 impl Source {
@@ -22,6 +24,7 @@ impl Source {
         match self {
             Source::File(path) => path.display().to_string(),
             Source::Stdin => "stdin".into(),
+            Source::Remote { display, .. } => display.clone(),
         }
     }
 }
@@ -49,6 +52,14 @@ impl Pager {
 
     pub fn from_stdin(content: String, max_width: Option<u16>) -> Self {
         Self::new(Source::Stdin, content, max_width)
+    }
+
+    pub fn from_remote(fetched: remote::Fetched, max_width: Option<u16>) -> Self {
+        let source = Source::Remote {
+            display: fetched.display,
+            raw_url: fetched.raw_url,
+        };
+        Self::new(source, fetched.content, max_width)
     }
 
     fn new(source: Source, content: String, max_width: Option<u16>) -> Self {
@@ -253,7 +264,7 @@ impl Pager {
     pub fn watch_path(&self) -> Option<&Path> {
         match &self.source {
             Source::File(path) => Some(path),
-            Source::Stdin => None,
+            Source::Stdin | Source::Remote { .. } => None,
         }
     }
 
@@ -265,11 +276,16 @@ impl Pager {
     }
 
     pub fn reload(&mut self) -> Result<()> {
-        let Source::File(path) = &self.source else {
-            return Ok(());
-        };
-        self.content = fs::read_to_string(path)
-            .with_context(|| format!("lecture de {}", path.display()))?;
+        match &self.source {
+            Source::File(path) => {
+                self.content = fs::read_to_string(path)
+                    .with_context(|| format!("lecture de {}", path.display()))?;
+            }
+            Source::Remote { raw_url, .. } => {
+                self.content = remote::refetch(raw_url)?;
+            }
+            Source::Stdin => return Ok(()),
+        }
         self.last_width = 0;
         Ok(())
     }
